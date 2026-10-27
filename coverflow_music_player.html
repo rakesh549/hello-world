@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Coverflow Music Player</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- jsmediatags for ID3 Metadata & Album Art Extraction -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.8.1/jsmediatags.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+
+        /* 3D Coverflow Container */
+        .coverflow-viewport {
+            perspective: 1000px;
+            transform-style: preserve-3d;
+        }
+
+        .coverflow-track {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform-style: preserve-3d;
+            transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        .album-card {
+            transform-style: preserve-3d;
+            transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), filter 0.4s ease, opacity 0.4s ease;
+            cursor: pointer;
+        }
+
+        /* Vinyl Spin Animation */
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .animate-spin-slow {
+            animation: spin 7s linear infinite;
+        }
+
+        /* Custom Scrollbar for Playlist */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 9999px;
+        }
+
+        /* Glassmorphism utility */
+        .glass {
+            background: rgba(15, 15, 22, 0.75);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.04);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+    </style>
+</head>
+<body class="h-full bg-slate-950 text-slate-100 overflow-hidden relative flex flex-col">
+
+    <!-- Ambient Dynamic Background -->
+    <div id="ambient-bg" class="absolute inset-0 z-0 transition-all duration-1000 opacity-30 bg-cover bg-center filter blur-[100px] scale-125 pointer-events-none"></div>
+    <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/85 to-slate-950/50 z-0 pointer-events-none"></div>
+
+    <!-- Top Navigation Bar -->
+    <header class="relative z-20 flex items-center justify-between px-4 py-3.5 glass border-b border-white/5 flex-shrink-0">
+        <div class="flex items-center space-x-2.5">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                <i data-lucide="disc" class="w-5 h-5 text-white animate-spin-slow"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-base tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">Coverflow Music</h1>
+                <p class="text-[10px] text-slate-400" id="track-count-status">0 local tracks loaded</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+            <!-- Folder / File Picker Button -->
+            <label class="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 active:scale-95 transition text-xs font-semibold text-white shadow-lg shadow-violet-600/30 cursor-pointer">
+                <i data-lucide="folder-open" class="w-4 h-4"></i>
+                <span>Add Music</span>
+                <input type="file" id="local-file-input" accept="audio/*" multiple class="hidden">
+            </label>
+            <button id="toggle-playlist-btn" class="p-2.5 rounded-xl glass-panel hover:bg-white/10 transition text-slate-300 relative">
+                <i data-lucide="list-music" class="w-4 h-4"></i>
+                <span id="playlist-badge" class="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-violet-500 text-[9px] font-bold flex items-center justify-center text-white hidden">0</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="relative z-10 flex-1 flex flex-col justify-between overflow-hidden p-3 md:p-6 max-w-5xl mx-auto w-full">
+        
+        <!-- Center Stage: 3D Coverflow -->
+        <div class="flex-1 flex flex-col items-center justify-center relative my-auto">
+            
+            <!-- Song Meta Header -->
+            <div id="meta-header" class="text-center mb-4 transition-all duration-300 px-4">
+                <div class="inline-flex items-center space-x-2 px-3 py-0.5 rounded-full glass-panel text-[11px] text-violet-300 mb-1.5 border border-violet-500/20">
+                    <span id="badge-album" class="font-semibold uppercase tracking-wider truncate max-w-[200px]">Local Audio</span>
+                    <span>•</span>
+                    <span id="badge-index">1 / 1</span>
+                </div>
+                <h2 id="current-title" class="text-xl md:text-3xl font-bold text-white tracking-tight truncate max-w-xs md:max-w-md mx-auto">No Music Loaded</h2>
+                <p id="current-artist" class="text-xs md:text-sm text-slate-300 mt-0.5 font-medium truncate">Tap 'Add Music' above to select songs from phone</p>
+            </div>
+
+            <!-- Coverflow Carousel Viewport -->
+            <div class="coverflow-viewport w-full h-[260px] md:h-[340px] flex items-center justify-center relative overflow-hidden" id="coverflow-viewport">
+                <div class="coverflow-track relative w-full h-full flex items-center justify-center" id="coverflow-track">
+                    <!-- Default placeholder card if no music -->
+                    <div class="album-card absolute w-52 h-52 md:w-64 md:h-64 rounded-2xl shadow-2xl overflow-hidden glass border border-white/20 flex flex-col items-center justify-center p-6 text-center">
+                        <div class="w-16 h-16 rounded-full bg-violet-600/20 flex items-center justify-center text-violet-400 mb-3 border border-violet-500/30">
+                            <i data-lucide="music" class="w-8 h-8"></i>
+                        </div>
+                        <h3 class="font-bold text-sm text-white mb-1">Your Library is Empty</h3>
+                        <p class="text-xs text-slate-400">Select MP3, WAV, FLAC, or AAC files from your device to start listening.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Touch / Click buttons -->
+            <div class="flex items-center space-x-6 mt-3">
+                <button id="carousel-prev" class="p-2.5 rounded-full glass-panel hover:bg-white/10 active:scale-90 transition border border-white/10 text-slate-300">
+                    <i data-lucide="chevron-left" class="w-5 h-5"></i>
+                </button>
+                <span class="text-xs text-slate-400 font-medium tracking-wide">Swipe or use arrows</span>
+                <button id="carousel-next" class="p-2.5 rounded-full glass-panel hover:bg-white/10 active:scale-90 transition border border-white/10 text-slate-300">
+                    <i data-lucide="chevron-right" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Bottom Player Controls Dock -->
+        <div class="glass rounded-3xl p-4 shadow-2xl border border-white/10 flex flex-col space-y-3.5 flex-shrink-0">
+            
+            <!-- Scrubbing Progress Bar -->
+            <div class="flex flex-col space-y-1">
+                <div class="flex justify-between text-[11px] text-slate-400 font-medium px-1">
+                    <span id="current-time">0:00</span>
+                    <span id="total-duration">0:00</span>
+                </div>
+                <div class="relative w-full h-2.5 bg-slate-900/90 rounded-full cursor-pointer group py-1" id="progress-container">
+                    <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden relative">
+                        <div id="progress-bar" class="absolute top-0 left-0 h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full w-0 transition-all"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Control Buttons -->
+            <div class="flex items-center justify-between px-1">
+                
+                <button id="shuffle-btn" class="text-slate-400 hover:text-white transition p-2 rounded-full active:bg-white/10" title="Shuffle">
+                    <i data-lucide="shuffle" class="w-5 h-5"></i>
+                </button>
+                
+                <button id="rewind-btn" class="text-slate-200 hover:text-white transition p-2 rounded-full active:bg-white/10" title="Previous Track">
+                    <i data-lucide="skip-back" class="w-6 h-6"></i>
+                </button>
+
+                <button id="play-pause-btn" class="w-14 h-14 rounded-full bg-gradient-to-tr from-violet-600 to-indigo-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/40 hover:scale-105 active:scale-95 transition transform" title="Play / Pause">
+                    <i data-lucide="play" class="w-7 h-7 translate-x-0.5" id="play-icon"></i>
+                </button>
+
+                <button id="forward-btn" class="text-slate-200 hover:text-white transition p-2 rounded-full active:bg-white/10" title="Next Track">
+                    <i data-lucide="skip-forward" class="w-6 h-6"></i>
+                </button>
+
+                <button id="repeat-btn" class="text-slate-400 hover:text-white transition p-2 rounded-full active:bg-white/10" title="Repeat">
+                    <i data-lucide="repeat" class="w-5 h-5"></i>
+                </button>
+
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Playlist Drawer Modal -->
+    <div id="playlist-drawer" class="fixed inset-y-0 right-0 z-50 w-full max-w-md glass transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col shadow-2xl border-l border-white/10">
+        <div class="p-4 flex items-center justify-between border-b border-white/10">
+            <div class="flex items-center space-x-2">
+                <i data-lucide="list-music" class="w-5 h-5 text-violet-400"></i>
+                <h3 class="font-bold text-base text-white">Playlist Queue</h3>
+            </div>
+            <button id="close-playlist-btn" class="p-2 rounded-xl hover:bg-white/10 transition text-slate-400 hover:text-white">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+        </div>
+
+        <div class="p-3 border-b border-white/5 flex items-center justify-between gap-2">
+            <div class="relative flex-1">
+                <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                <input type="text" id="playlist-search" placeholder="Search songs..." class="w-full bg-slate-900/60 border border-white/10 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-violet-500 transition">
+            </div>
+            <button id="clear-playlist-btn" class="px-3 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-semibold transition border border-red-500/20">
+                Clear
+            </button>
+        </div>
+
+        <div id="playlist-items" class="flex-1 overflow-y-auto p-3 space-y-2">
+            <!-- Playlist items injected here -->
+        </div>
+    </div>
+
+    <!-- Hidden HTML5 Audio Element -->
+    <audio id="audio-element" preload="metadata"></audio>
+
+    <!-- Application JavaScript -->
+    <script>
+        let tracks = [];
+        let currentIndex = 0;
+        let isPlaying = false;
+        let isShuffle = false;
+        let isRepeat = false;
+
+        // DOM Elements
+        const audioElement = document.getElementById('audio-element');
+        const trackContainer = document.getElementById('coverflow-track');
+        const ambientBg = document.getElementById('ambient-bg');
+        const currentTitle = document.getElementById('current-title');
+        const currentArtist = document.getElementById('current-artist');
+        const badgeAlbum = document.getElementById('badge-album');
+        const badgeIndex = document.getElementById('badge-index');
+        const trackCountStatus = document.getElementById('track-count-status');
+        const playPauseBtn = document.getElementById('play-pause-btn');
+        const playIcon = document.getElementById('play-icon');
+        const rewindBtn = document.getElementById('rewind-btn');
+        const forwardBtn = document.getElementById('forward-btn');
+        const shuffleBtn = document.getElementById('shuffle-btn');
+        const repeatBtn = document.getElementById('repeat-btn');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const currentTimeEl = document.getElementById('current-time');
+        const totalDurationEl = document.getElementById('total-duration');
+        const localFileInput = document.getElementById('local-file-input');
+        const togglePlaylistBtn = document.getElementById('toggle-playlist-btn');
+        const closePlaylistBtn = document.getElementById('close-playlist-btn');
+        const playlistDrawer = document.getElementById('playlist-drawer');
+        const playlistItems = document.getElementById('playlist-items');
+        const playlistSearch = document.getElementById('playlist-search');
+        const clearPlaylistBtn = document.getElementById('clear-playlist-btn');
+        const playlistBadge = document.getElementById('playlist-badge');
+        const carouselPrev = document.getElementById('carousel-prev');
+        const carouselNext = document.getElementById('carousel-next');
+
+        // Initialize Lucide Icons
+        function initUI() {
+            lucide.createIcons();
+        }
+
+        // Handle local music file selection
+        localFileInput.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+
+            trackCountStatus.textContent = `Processing ${files.length} tracks...`;
+
+            for (let file of files) {
+                let trackObj = {
+                    file: file,
+                    title: file.name.replace(/\.[^/.]+$/, ""),
+                    artist: "Unknown Artist",
+                    album: "Local Storage",
+                    cover: null,
+                    duration: "0:00",
+                    objectUrl: URL.createObjectURL(file)
+                };
+
+                // Try reading ID3 Metadata with jsmediatags
+                await new Promise((resolve) => {
+                    jsmediatags.read(file, {
+                        onSuccess: function(tag) {
+                            const tags = tag.tags;
+                            if (tags.title) trackObj.title = tags.title;
+                            if (tags.artist) trackObj.artist = tags.artist;
+                            if (tags.album) trackObj.album = tags.album;
+
+                            if (tags.picture) {
+                                const data = tags.picture.data;
+                                const format = tags.picture.format;
+                                let base64String = "";
+                                for (let i = 0; i < data.length; i++) {
+                                    base64String += String.fromCharCode(data[i]);
+                                }
+                                trackObj.cover = `data:${format};base64,${btoa(base64String)}`;
+                            }
+                            resolve();
+                        },
+                        onError: function(error) {
+                            resolve(); // Continue even if ID3 tags fail
+                        }
+                    });
+                });
+
+                tracks.push(trackObj);
+            }
+
+            trackCountStatus.textContent = `${tracks.length} local tracks loaded`;
+            playlistBadge.textContent = tracks.length;
+            playlistBadge.classList.remove('hidden');
+
+            renderCoverflow();
+            renderPlaylist();
+
+            if (tracks.length > 0 && !isPlaying) {
+                loadTrack(currentIndex);
+            }
+        });
+
+        // Render 3D Coverflow Cards
+        function renderCoverflow() {
+            if (tracks.length === 0) return;
+            trackContainer.innerHTML = '';
+
+            tracks.forEach((track, index) => {
+                const card = document.createElement('div');
+                card.className = `album-card absolute w-52 h-52 md:w-64 md:h-64 rounded-2xl shadow-2xl overflow-hidden glass border border-white/20`;
+                card.dataset.index = index;
+                
+                let coverHtml = track.cover 
+                    ? `<img src="${track.cover}" class="w-full h-full object-cover pointer-events-none">`
+                    : `<div class="w-full h-full bg-gradient-to-tr from-violet-900 via-indigo-900 to-slate-900 flex flex-col items-center justify-center p-4 text-center">
+                         <i data-lucide="disc" class="w-16 h-16 text-violet-400 mb-2 animate-spin-slow"></i>
+                         <span class="text-xs font-bold text-white truncate max-w-full">${track.title}</span>
+                       </div>`;
+
+                card.innerHTML = `
+                    <div class="relative w-full h-full group">
+                        ${coverHtml}
+                        
+                        <!-- Vinyl Slide Out for Active Track -->
+                        <div class="vinyl-overlay absolute inset-0 flex items-center justify-center transition-all duration-500 opacity-0 pointer-events-none">
+                            <div class="vinyl-disc w-40 h-40 md:w-52 md:h-52 rounded-full bg-slate-950 border-4 border-slate-800 shadow-2xl flex items-center justify-center relative ${isPlaying && index === currentIndex ? 'animate-spin-slow' : ''}">
+                                <div class="absolute inset-2 rounded-full border border-white/10"></div>
+                                <div class="absolute inset-8 rounded-full border border-white/10"></div>
+                                <div class="w-12 h-12 rounded-full bg-gradient-to-tr from-violet-600 to-indigo-500 flex items-center justify-center border border-white/30">
+                                    <div class="w-3 h-3 rounded-full bg-slate-950"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/20 to-transparent flex flex-col justify-end p-3">
+                            <h3 class="text-sm font-bold text-white truncate">${track.title}</h3>
+                            <p class="text-[11px] text-slate-300 truncate">${track.artist}</p>
+                        </div>
+                    </div>
+                `;
+
+                card.addEventListener('click', () => {
+                    currentIndex = index;
+                    updateCoverflowPosition();
+                    loadTrack(currentIndex);
+                    if (!isPlaying) togglePlay();
+                });
+
+                trackContainer.appendChild(card);
+            });
+
+            initUI();
+            updateCoverflowPosition();
+        }
+
+        // Update 3D Transformations for Coverflow
+        function updateCoverflowPosition() {
+            if (tracks.length === 0) return;
+            const cards = document.querySelectorAll('.album-card');
+
+            cards.forEach((card, index) => {
+                const offset = index - currentIndex;
+                const absOffset = Math.abs(offset);
+                
+                let translateX = offset * 90;
+                let translateZ = -absOffset * 130;
+                let rotateY = offset < 0 ? 40 : (offset > 0 ? -40 : 0);
+                let opacity = Math.max(1 - absOffset * 0.35, 0.15);
+                let zIndex = 50 - absOffset;
+                let scale = offset === 0 ? 1.05 : 0.8;
+
+                card.style.transform = `translateX(${translateX}px) translateZ(${translateZ}px) rotateY(${rotateY}deg) scale(${scale})`;
+                card.style.opacity = opacity;
+                card.style.zIndex = zIndex;
+
+                const vinylOverlay = card.querySelector('.vinyl-overlay');
+                if (offset === 0) {
+                    card.classList.add('ring-2', 'ring-violet-500/80', 'shadow-indigo-500/30');
+                    if (vinylOverlay) {
+                        vinylOverlay.classList.remove('opacity-0');
+                        vinylOverlay.classList.add('opacity-100', 'translate-x-10');
+                    }
+                } else {
+                    card.classList.remove('ring-2', 'ring-violet-500/80', 'shadow-indigo-500/30');
+                    if (vinylOverlay) {
+                        vinylOverlay.classList.add('opacity-0');
+                        vinylOverlay.classList.remove('opacity-100', 'translate-x-10');
+                    }
+                }
+            });
+
+            const track = tracks[currentIndex];
+            if (track) {
+                if (track.cover) {
+                    ambientBg.style.backgroundImage = `url('${track.cover}')`;
+                }
+                currentTitle.textContent = track.title;
+                currentArtist.textContent = track.artist;
+                badgeAlbum.textContent = track.album;
+                badgeIndex.textContent = `${currentIndex + 1} / ${tracks.length}`;
+            }
+
+            document.querySelectorAll('.playlist-item').forEach((item, idx) => {
+                if (idx === currentIndex) {
+                    item.classList.add('bg-violet-600/20', 'border-violet-500/40');
+                    item.classList.remove('border-white/5');
+                } else {
+                    item.classList.remove('bg-violet-600/20', 'border-violet-500/40');
+                    item.classList.add('border-white/5');
+                }
+            });
+        }
+
+        // Load Track into Audio Element
+        function loadTrack(index) {
+            if (tracks.length === 0) return;
+            currentIndex = index;
+            const track = tracks[currentIndex];
+            audioElement.src = track.objectUrl;
+            audioElement.load();
+            if (isPlaying) {
+                audioElement.play().catch(e => console.log("Play error:", e));
+            }
+            updateCoverflowPosition();
+        }
+
+        // Toggle Play / Pause
+        function togglePlay() {
+            if (tracks.length === 0) return;
+            if (isPlaying) {
+                audioElement.pause();
+                isPlaying = false;
+                playIcon.setAttribute('data-lucide', 'play');
+            } else {
+                audioElement.play().then(() => {
+                    isPlaying = true;
+                    playIcon.setAttribute('data-lucide', 'pause');
+                    updateCoverflowPosition();
+                }).catch(e => console.log("Play error:", e));
+            }
+            initUI();
+            updateCoverflowPosition();
+        }
+
+        // Render Playlist Drawer Items
+        function renderPlaylist(filter = '') {
+            playlistItems.innerHTML = '';
+            tracks.forEach((track, index) => {
+                if (filter && !track.title.toLowerCase().includes(filter.toLowerCase()) && !track.artist.toLowerCase().includes(filter.toLowerCase())) {
+                    return;
+                }
+
+                const item = document.createElement('div');
+                item.className = `playlist-item flex items-center justify-between p-2.5 rounded-xl glass-panel hover:bg-white/10 transition cursor-pointer border ${index === currentIndex ? 'bg-violet-600/20 border-violet-500/40' : 'border-white/5'}`;
+                
+                let thumb = track.cover 
+                    ? `<img src="${track.cover}" class="w-10 h-10 rounded-lg object-cover flex-shrink-0">`
+                    : `<div class="w-10 h-10 rounded-lg bg-violet-900/40 flex items-center justify-center text-violet-400 flex-shrink-0"><i data-lucide="music" class="w-5 h-5"></i></div>`;
+
+                item.innerHTML = `
+                    <div class="flex items-center space-x-3 overflow-hidden">
+                        ${thumb}
+                        <div class="overflow-hidden">
+                            <h4 class="text-xs font-semibold text-white truncate">${track.title}</h4>
+                            <p class="text-[10px] text-slate-400 truncate">${track.artist} • ${track.album}</p>
+                        </div>
+                    </div>
+                    <button class="delete-track-btn text-slate-500 hover:text-red-400 p-2 transition" data-index="${index}">
+                        <i data-lucide="trash-2" class="w-4 h-4 pointer-events-none"></i>
+                    </button>
+                `;
+
+                item.addEventListener('click', (e) => {
+                    if (e.target.closest('.delete-track-btn')) {
+                        return;
+                    }
+                    currentIndex = index;
+                    loadTrack(currentIndex);
+                    if (!isPlaying) togglePlay();
+                    playlistDrawer.classList.add('translate-x-full');
+                });
+
+                const delBtn = item.querySelector('.delete-track-btn');
+                delBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    tracks.splice(index, 1);
+                    playlistBadge.textContent = tracks.length;
+                    if (tracks.length === 0) {
+                        playlistBadge.classList.add('hidden');
+                        trackCountStatus.textContent = '0 local tracks loaded';
+                    }
+                    if (currentIndex >= tracks.length && tracks.length > 0) {
+                        currentIndex = tracks.length - 1;
+                    }
+                    renderCoverflow();
+                    renderPlaylist(playlistSearch.value);
+                    if (tracks.length > 0) {
+                        loadTrack(currentIndex);
+                    }
+                });
+
+                playlistItems.appendChild(item);
+            });
+            initUI();
+        }
+
+        // Event Listeners
+        playPauseBtn.addEventListener('click', togglePlay);
+
+        rewindBtn.addEventListener('click', () => {
+            if (tracks.length === 0) return;
+            currentIndex = (currentIndex - 1 + tracks.length) % tracks.length;
+            loadTrack(currentIndex);
+        });
+
+        forwardBtn.addEventListener('click', () => {
+            nextTrack();
+        });
+
+        function nextTrack() {
+            if (tracks.length === 0) return;
+            if (isShuffle) {
+                let randIndex;
+                do {
+                    randIndex = Math.floor(Math.random() * tracks.length);
+                } while (randIndex === currentIndex && tracks.length > 1);
+                currentIndex = randIndex;
+            } else {
+                currentIndex = (currentIndex + 1) % tracks.length;
+            }
+            loadTrack(currentIndex);
+        }
+
+        audioElement.addEventListener('ended', () => {
+            if (isRepeat) {
+                audioElement.currentTime = 0;
+                audioElement.play();
+            } else {
+                nextTrack();
+            }
+        });
+
+        audioElement.addEventListener('timeupdate', () => {
+            if (audioElement.duration) {
+                const percent = (audioElement.currentTime / audioElement.duration) * 100;
+                progressBar.style.width = `${percent}%`;
+                currentTimeEl.textContent = formatTime(audioElement.currentTime);
+                totalDurationEl.textContent = formatTime(audioElement.duration);
+            }
+        });
+
+        progressContainer.addEventListener('click', (e) => {
+            if (!audioElement.duration) return;
+            const rect = progressContainer.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            audioElement.currentTime = (clickX / rect.width) * audioElement.duration;
+        });
+
+        shuffleBtn.addEventListener('click', () => {
+            isShuffle = !isShuffle;
+            shuffleBtn.classList.toggle('text-violet-400', isShuffle);
+            shuffleBtn.classList.toggle('bg-white/5', isShuffle);
+        });
+
+        repeatBtn.addEventListener('click', () => {
+            isRepeat = !isRepeat;
+            repeatBtn.classList.toggle('text-violet-400', isRepeat);
+            repeatBtn.classList.toggle('bg-white/5', isRepeat);
+        });
+
+        carouselPrev.addEventListener('click', () => {
+            if (tracks.length === 0) return;
+            currentIndex = (currentIndex - 1 + tracks.length) % tracks.length;
+            loadTrack(currentIndex);
+        });
+
+        carouselNext.addEventListener('click', () => {
+            if (tracks.length === 0) return;
+            nextTrack();
+        });
+
+        // Swipe Gestures for Mobile Coverflow
+        let touchStartX = 0;
+        const viewport = document.getElementById('coverflow-viewport');
+        
+        viewport.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+        });
+
+        viewport.addEventListener('touchend', (e) => {
+            if (tracks.length === 0) return;
+            const touchEndX = e.changedTouches[0].clientX;
+            const diff = touchStartX - touchEndX;
+            if (Math.abs(diff) > 40) {
+                if (diff > 0) {
+                    nextTrack();
+                } else {
+                    currentIndex = (currentIndex - 1 + tracks.length) % tracks.length;
+                    loadTrack(currentIndex);
+                }
+            }
+        });
+
+        // Playlist Drawer Controls
+        togglePlaylistBtn.addEventListener('click', () => {
+            playlistDrawer.classList.remove('translate-x-full');
+            renderPlaylist(playlistSearch.value);
+        });
+
+        closePlaylistBtn.addEventListener('click', () => {
+            playlistDrawer.classList.add('translate-x-full');
+        });
+
+        playlistSearch.addEventListener('input', (e) => {
+            renderPlaylist(e.target.value);
+        });
+
+        clearPlaylistBtn.addEventListener('click', () => {
+            tracks = [];
+            playlistBadge.textContent = '0';
+            playlistBadge.classList.add('hidden');
+            trackCountStatus.textContent = '0 local tracks loaded';
+            audioElement.pause();
+            audioElement.src = '';
+            isPlaying = false;
+            playIcon.setAttribute('data-lucide', 'play');
+            initUI();
+            renderCoverflow();
+            renderPlaylist();
+            currentTitle.textContent = "No Music Loaded";
+            currentArtist.textContent = "Tap 'Add Music' above to select songs";
+            badgeAlbum.textContent = "Local Audio";
+            badgeIndex.textContent = "1 / 1";
+        });
+
+        function formatTime(secs) {
+            const m = Math.floor(secs / 60);
+            const s = Math.floor(secs % 60);
+            return `${m}:${s < 10 ? '0' : ''}${s}`;
+        }
+
+        window.onload = initUI;
+    </script>
+</body>
+</html>
